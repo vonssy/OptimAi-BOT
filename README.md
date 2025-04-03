@@ -1,6 +1,10 @@
 # OptimAi Extension BOT
 OptimAi Extension BOT
 
+ > [!WARNING]
+ > ## Bot not working!
+ > ##  Now they encrypt the payload data used for requests. I have done the reverse and the resulting data is valid, but since it is still in javascript, I tried converting it to python and the results are different. If anyone is an expert in javascript and python can help me convert it.
+
 - Register Here : [OptimAi Dashboard](https://node.optimai.network/register?ref=C93BB492)
 
 ## Features
@@ -10,7 +14,7 @@ OptimAi Extension BOT
   - Auto Run With Private Proxy - Choose 2
   - Auto Run Without Proxy - Choose 3
   - Auto Claim Daily Check-In
-  - Auto Connect Websocket & Update Uptime
+  - Auto Register Nodes & Update The Uptime
   - Multi Accounts With Threads
 
 ## Requiremnets
