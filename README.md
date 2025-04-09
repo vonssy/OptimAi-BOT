@@ -1,11 +1,5 @@
 # OptimAi Extension BOT
 
- > [!WARNING]
- > ## Bot not working!
- > ##  Now they encrypt the payload data used for requests. I have done the reverse and the resulting data is valid, but since it is still in javascript, I tried converting it to python and the results are different. If anyone is an expert in javascript and python can help me convert it.
- >
- > ## Contact me: [Telegram](https://t.me/Anoraks_uneducate)
-
 - Register Here : [OptimAi Dashboard](https://node.optimai.network/register?ref=C93BB492)
 
 ## Features
@@ -21,6 +15,7 @@
 ## Requiremnets
 
 - Make sure you have Python3.9 or higher installed and pip.
+- Node.js.
 
 ## Instalation
 
@@ -39,17 +34,53 @@
 
 ## Configuration
 
-- **tokens.txt:** You will find the file `tokens.txt` inside the project directory. Make sure `tokens.txt` contains data that matches the format expected by the script. Here are examples of file formats:
+- **accounts.json:** You will find the file `accounts.json` inside the project directory. Make sure `accounts.json` contains data that matches the format expected by the script. Here are examples of file formats:
   ```bash
-    eyjxxxx1
-    eyjxxxx2
+  [
+      {
+          "accessToken": "your_access_token_1",
+          "registerPayload": "your_register_payload_1",
+          "uptimePayload": "your_uptime_payload_1"
+      },
+      {
+          "accessToken": "your_access_token_2",
+          "registerPayload": "your_register_payload_2",
+          "uptimePayload": "your_uptime_payload_2"
+      }
+  ]
   ```
+
+### How to Get Register & Uptime Payload
+
+1. Run the javascript file
+   ```javascript
+   node generate_payload.js
+   ```
+2. Enter Your User ID & Device ID
+3. Copy The Result and Paste on accounts.json
+
+### Screenshoots
+
+<div style="text-align: center;">
+  <h4><strong>User ID</strong></h4>
+  <img src="Screenshot/Image1.png" alt="Image" width="500"/>
+</div>
+
+<div style="text-align: center;">
+  <h4><strong>Device ID</strong></h4>
+  <img src="Screenshot/Image2.png" alt="Image" width="500"/>
+</div>
+
+<div style="text-align: center;">
+  <h4><strong>Generate Payload</strong></h4>
+  <img src="Screenshot/Image3.png" alt="Image" width="500"/>
+</div>
 
 - **proxy.txt:** You will find the file `proxy.txt` inside the project directory. Make sure `proxy.txt` contains data that matches the format expected by the script. Here are examples of file formats:
   ```bash
-    ip:port # Default Protcol HTTP.
-    protocol://ip:port
-    protocol://user:pass@ip:port
+  ip:port # Default Protcol HTTP.
+  protocol://ip:port
+  protocol://user:pass@ip:port
   ```
 
 ## Run

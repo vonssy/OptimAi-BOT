@@ -7,7 +7,7 @@ from aiohttp_socks import ProxyConnector
 from fake_useragent import FakeUserAgent
 from datetime import datetime
 from colorama import *
-import asyncio, time, hmac, base64, hashlib, json, os, pytz
+import asyncio, base64, json, os, pytz
 
 wib = pytz.timezone('Asia/Jakarta')
 
@@ -51,6 +51,21 @@ class Optimai:
         hours, remainder = divmod(seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
+    
+    def load_accounts(self):
+        filename = "accounts.json"
+        try:
+            if not os.path.exists(filename):
+                self.log(f"{Fore.RED}File {filename} Not Found.{Style.RESET_ALL}")
+                return
+
+            with open(filename, 'r') as file:
+                data = json.load(file)
+                if isinstance(data, list):
+                    return data
+                return []
+        except json.JSONDecodeError:
+            return []
     
     async def load_proxies(self, use_proxy_choice: int):
         filename = "proxy.txt"
@@ -114,49 +129,18 @@ class Optimai:
         
         mask_account = account[:3] + '*' * 3 + account[-3:]
         return mask_account
-    
-    def stable_stringify(self, data):
-        if isinstance(data, dict):
-            return "{" + ",".join(
-                f'"{key}":{self.stable_stringify(value)}' for key, value in sorted(data.items())
-            ) + "}"
-        elif isinstance(data, list):
-            return "[" + ",".join(self.stable_stringify(value) for value in data) + "]"
-        else:
-            return json.dumps(data, separators=(",", ":"))
-    
-    def device_info(self):
-        device_info = {
-            "cpu_cores":1,
-            "memory_gb":0,
-            "screen_width_px":375,
-            "screen_height_px":600,
-            "color_depth":30,
-            "scale_factor":1,
-            "browser_name":"chrome",
-            "device_type":"extension",
-            "language":"id-ID",
-            "timezone":"Asia/Jakarta"
-        }
-        return device_info
 
-    def generate_client_token(self):
-        client_secret = "D1A167BD1346DDF2357DA5A2F2F2F"
-        payload = {
-            "client_app_id": "TLG_MINI_APP_V1",
-            "timestamp": int(time.time() * 1000),
-            "device_info": self.device_info()
-        }
+    def decode_response_data(self, data):
+        decoded = base64.b64decode(data).decode('utf-8')
+        filtered = ''.join([char for i, char in enumerate(decoded) if (i + 1) % 5 != 0])
+        reversed_str = filtered[::-1]
+        a = 7
         
-        payload_string = self.stable_stringify(payload)
-        signature = hmac.new(client_secret.encode("utf-8"), payload_string.encode("utf-8"), hashlib.sha256).digest()
-        
-        token_payload = payload.copy()
-        token_payload["signature"] = signature.hex()
-        
-        token_string = self.stable_stringify(token_payload)
-        client_token = base64.b64encode(token_string.encode("utf-8")).decode("utf-8")
-        return client_token
+        result = ''.join(
+            chr(int(reversed_str[i:i+2], 16) ^ (a + i//2))
+            for i in range(0, len(reversed_str), 2)
+        )
+        return result
 
     def print_message(self, account, proxy, color, message):
         self.log(
@@ -192,15 +176,14 @@ class Optimai:
             except ValueError:
                 print(f"{Fore.RED + Style.BRIGHT}Invalid input. Enter a number (1, 2 or 3).{Style.RESET_ALL}")
     
-    async def register_nodes(self, access_token: str, proxy=None, retries=5):
-        url = "https://api.optimai.network/devices/register"
-        data = json.dumps(self.device_info())
+    async def register_nodes(self, access_token: str, register_payload: str, proxy=None, retries=5):
+        url = "https://api.optimai.network/devices/register-v2"
+        data = json.dumps({"data":register_payload})
         headers = {
             **self.headers,
             "Authorization": f"Bearer {access_token}",
             "Content-Length": str(len(data)),
-            "Content-Type": "application/json",
-            "X-Client-Authentication": self.generate_client_token()
+            "Content-Type": "application/json"
         }
         for attempt in range(retries):
             connector = ProxyConnector.from_url(proxy) if proxy else None
@@ -214,6 +197,28 @@ class Optimai:
                     await asyncio.sleep(5)
                     continue
                 return self.print_message(access_token, proxy, Fore.RED, f"Registering Nodes Failed: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
+    
+    async def update_uptime(self, access_token: str, uptime_payload: str, proxy=None, retries=5):
+        url = "https://api.optimai.network/uptime/online"
+        data = json.dumps({"data":uptime_payload})
+        headers = {
+            **self.headers,
+            "Authorization": f"Bearer {access_token}",
+            "Content-Length": str(len(data)),
+            "Content-Type": "application/json"
+        }
+        for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
+            try:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
+                    async with session.post(url=url, headers=headers, data=data) as response:
+                        response.raise_for_status()
+                        return await response.json()
+            except (Exception, ClientResponseError) as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
+                    continue
+                return self.print_message(access_token, proxy, Fore.RED, f"Update Uptime Failed: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
     
     async def perform_checkin(self, access_token: str, proxy=None, retries=5):
         url = "https://api.optimai.network/daily-tasks/check-in"
@@ -236,18 +241,47 @@ class Optimai:
                     continue
                 return self.print_message(access_token, proxy, Fore.RED, f"Perform Chechk-In Failed: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
             
-    async def process_register_nodes(self, access_token: str, use_proxy: bool):
+    async def process_register_nodes(self, access_token: str, register_payload: str, uptime_payload: str, use_proxy: bool):
         proxy = self.get_next_proxy_for_account(access_token) if use_proxy else None
         nodes = None
         while nodes is None:
-            nodes = await self.register_nodes(access_token, proxy)
+            nodes = await self.register_nodes(access_token, register_payload, proxy)
             if not nodes:
                 proxy = self.rotate_proxy_for_account(access_token) if use_proxy else None
                 await asyncio.sleep(5)
                 continue
-            
-            self.print_message(access_token, proxy, Fore.GREEN, "Registering Nodes Success")
-            return nodes
+
+            register_response = nodes.get("data", {})
+            register_result = json.loads(self.decode_response_data(register_response))
+            if register_result and register_result.get("device_id"):
+                self.print_message(access_token, proxy, Fore.GREEN, "Registering Nodes Success")
+                
+                await self.process_update_uptime(access_token, uptime_payload, use_proxy)
+
+            nodes = None
+            self.print_message(access_token, proxy, Fore.RED, "Registering Nodes Failed")
+            await asyncio.sleep(5)
+            continue
+
+    async def process_update_uptime(self, access_token: str, uptime_payload: str, use_proxy: bool):
+        while True:
+            await asyncio.sleep(10 * 60)
+
+            proxy = self.get_next_proxy_for_account(access_token) if use_proxy else None
+            updated = await self.update_uptime(access_token, uptime_payload, proxy)
+            if updated:
+                updated_response = updated.get("data", {})
+                updated_result = json.loads(self.decode_response_data(updated_response))
+                if updated_result and updated_result.get("reward"):
+                    reward = updated_result.get("reward", 0)
+                    self.print_message(access_token, proxy, Fore.GREEN, 
+                        "Uptime Updated Successfully "
+                        f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
+                        f"{Fore.CYAN + Style.BRIGHT} Reward: {Style.RESET_ALL}"
+                        f"{Fore.WHITE + Style.BRIGHT}+{reward} OPI{Style.RESET_ALL}"
+                    )
+                else:
+                    self.print_message(access_token, proxy, Fore.RED, "Update Uptime Failed")
             
     async def process_perform_checkin(self, access_token: str, use_proxy: bool):
         while True:
@@ -266,70 +300,18 @@ class Optimai:
             
             await asyncio.sleep(12 * 60 * 60)
         
-    async def connect_websocket(self, access_token: str, ws_token, use_proxy: bool):
-        wss_url = f"wss://ws.optimai.network/?token={ws_token}"
-        headers = {
-            "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
-            "Cache-Control": "no-cache",
-            "Connection": "Upgrade",
-            "Host": "ws.optimai.network",
-            "Origin": "chrome-extension://njlfcjdojmopagogfpjgcbnpmiknapnd",
-            "Pragma": "no-cache",
-            "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
-            "Sec-WebSocket-Key": "YlDqUSX4RQ86eTGWUR1Ynw===",
-            "Sec-WebSocket-Version": "13",
-            "Upgrade": "websocket",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
-        }
-        while True:
-            proxy = self.get_next_proxy_for_account(access_token) if use_proxy else None
-            connector = ProxyConnector.from_url(proxy) if proxy else None
-            session = ClientSession(connector=connector, timeout=ClientTimeout(total=120))
-            try:
-                async with session.ws_connect(wss_url, headers=headers) as wss:
-                    while True:
-                        try:
-                            response = await wss.receive_json()
-                            if response and response.get("type") == "conn_established":
-                                self.print_message(access_token, proxy, Fore.GREEN, "Websocket Is Connected")
-                            elif response and response.get("type") == "uptime_updated":
-                                reward = response.get("data", {}).get("reward", 0)
-                                self.print_message(access_token, proxy, Fore.GREEN, 
-                                    "Uptime Updated "
-                                    f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
-                                    f"{Fore.CYAN + Style.BRIGHT} Reward: {Style.RESET_ALL}"
-                                    f"{Fore.WHITE + Style.BRIGHT}+{reward:.5f} OPI{Style.RESET_ALL}"
-                                )
-                    
-                        except Exception as e:
-                            self.print_message(access_token, proxy, Fore.YELLOW, f"Websocket Connection Closed: {Fore.RED + Style.BRIGHT}{str(e)}")
-                            await asyncio.sleep(5)
-                            break
-
-            except Exception as e:
-                self.print_message(access_token, proxy, Fore.RED, f"Websocket Not Connected: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
-                self.rotate_proxy_for_account(access_token) if use_proxy else None
-                await asyncio.sleep(5)
-
-            except asyncio.CancelledError:
-                self.print_message(access_token, proxy, Fore.YELLOW, "Websocket Closed")
-                break
-            finally:
-                await session.close()
-        
-    async def process_accounts(self, access_token: str, use_proxy: bool):
+    async def process_accounts(self, access_token: str, register_payload: str, uptime_payload: str, use_proxy: bool):
         tasks = []
         tasks.append(asyncio.create_task(self.process_perform_checkin(access_token, use_proxy)))
-        nodes = await self.process_register_nodes(access_token, use_proxy)
-        if nodes:
-            ws_token = nodes.get("ws_auth_token")
-            tasks.append(asyncio.create_task(self.connect_websocket(access_token, ws_token, use_proxy)))
+        tasks.append(asyncio.create_task(self.process_register_nodes(access_token, register_payload, uptime_payload, use_proxy)))
         await asyncio.gather(*tasks)
         
     async def main(self):
         try:
-            with open('tokens.txt', 'r') as file:
-                access_tokens = [line.strip() for line in file if line.strip()]
+            accounts = self.load_accounts()
+            if not accounts:
+                self.log(f"{Fore.RED + Style.BRIGHT}No Accounts Loaded.{Style.RESET_ALL}")
+                return
             
             use_proxy_choice = self.print_question()
 
@@ -341,7 +323,7 @@ class Optimai:
             self.welcome()
             self.log(
                 f"{Fore.GREEN + Style.BRIGHT}Account's Total: {Style.RESET_ALL}"
-                f"{Fore.WHITE + Style.BRIGHT}{len(access_tokens)}{Style.RESET_ALL}"
+                f"{Fore.WHITE + Style.BRIGHT}{len(accounts)}{Style.RESET_ALL}"
             )
 
             if use_proxy:
@@ -351,16 +333,18 @@ class Optimai:
 
             while True:
                 tasks = []
-                for access_token in access_tokens:
-                    if access_token:
-                        tasks.append(asyncio.create_task(self.process_accounts(access_token, use_proxy)))
+                for account in accounts:
+                    if account:
+                        access_token = account["accessToken"]
+                        register_payload = account["registerPayload"]
+                        uptime_payload = account["uptimePayload"]
+
+                        if access_token and register_payload and uptime_payload:
+                            tasks.append(asyncio.create_task(self.process_accounts(access_token, register_payload, uptime_payload, use_proxy)))
 
                 await asyncio.gather(*tasks)
                 await asyncio.sleep(10)
 
-        except FileNotFoundError:
-            self.log(f"{Fore.RED}File 'tokens.txt' Not Found.{Style.RESET_ALL}")
-            return
         except Exception as e:
             self.log(f"{Fore.RED+Style.BRIGHT}Error: {e}{Style.RESET_ALL}")
             raise e
