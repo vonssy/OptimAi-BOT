@@ -50,6 +50,13 @@
   ]
   ```
 
+- **proxy.txt:** You will find the file `proxy.txt` inside the project directory. Make sure `proxy.txt` contains data that matches the format expected by the script. Here are examples of file formats:
+  ```bash
+  ip:port # Default Protcol HTTP.
+  protocol://ip:port
+  protocol://user:pass@ip:port
+  ```
+
 ### How to Get Register & Uptime Payload
 
 1. Run the javascript file
@@ -75,13 +82,6 @@
   <h4><strong>Generate Payload</strong></h4>
   <img src="Screenshot/Image3.png" alt="Image" width="500"/>
 </div>
-
-- **proxy.txt:** You will find the file `proxy.txt` inside the project directory. Make sure `proxy.txt` contains data that matches the format expected by the script. Here are examples of file formats:
-  ```bash
-  ip:port # Default Protcol HTTP.
-  protocol://ip:port
-  protocol://user:pass@ip:port
-  ```
 
 ## Run
 
