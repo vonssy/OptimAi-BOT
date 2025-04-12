@@ -38,12 +38,12 @@
   ```bash
   [
       {
-          "accessToken": "your_access_token_1",
+          "refreshToken": "your_opai_refresh_token_1",
           "registerPayload": "your_register_payload_1",
           "uptimePayload": "your_uptime_payload_1"
       },
       {
-          "accessToken": "your_access_token_2",
+          "refreshToken": "your_opai_refresh_token_2",
           "registerPayload": "your_register_payload_2",
           "uptimePayload": "your_uptime_payload_2"
       }

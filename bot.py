@@ -13,6 +13,8 @@ wib = pytz.timezone('Asia/Jakarta')
 
 class Optimai:
     def __init__(self) -> None:
+        self.USER_AGENT = FakeUserAgent().random
+        self.BASE_API = "https://api.optimai.network"
         self.headers = {
             "Accept": "*/*",
             "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -21,11 +23,12 @@ class Optimai:
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "none",
             "Sec-Fetch-Storage-Access": "active",
-            "User-Agent": FakeUserAgent().random
+            "User-Agent": self.USER_AGENT
         }
         self.proxies = []
         self.proxy_index = 0
         self.account_proxies = {}
+        self.access_tokens = {}
 
     def clear_terminal(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -140,7 +143,7 @@ class Optimai:
             chr(int(reversed_str[i:i+2], 16) ^ (a + i//2))
             for i in range(0, len(reversed_str), 2)
         )
-        return result
+        return json.loads(result)
 
     def print_message(self, account, proxy, color, message):
         self.log(
@@ -176,12 +179,42 @@ class Optimai:
             except ValueError:
                 print(f"{Fore.RED + Style.BRIGHT}Invalid input. Enter a number (1, 2 or 3).{Style.RESET_ALL}")
     
-    async def register_nodes(self, access_token: str, register_payload: str, proxy=None, retries=5):
-        url = "https://api.optimai.network/devices/register-v2"
+    async def get_access_token(self, refresh_token: str, proxy=None, retries=5):
+        url = f"{self.BASE_API}/auth/refresh"
+        data = json.dumps({"refresh_token":refresh_token})
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Authorization": f"Bearer {refresh_token}",
+            "Content-Length": str(len(data)),
+            "Content-Type": "application/json",
+            "Origin": "https://node.optimai.network",
+            "Referer": "https://node.optimai.network/",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
+            "User-Agent": self.USER_AGENT
+        }
+        for attempt in range(retries):
+            connector = ProxyConnector.from_url(proxy) if proxy else None
+            try:
+                async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
+                    async with session.post(url=url, headers=headers, data=data) as response:
+                        response.raise_for_status()
+                        result = await response.json()
+                        return result["access_token"]
+            except (Exception, ClientResponseError) as e:
+                if attempt < retries - 1:
+                    await asyncio.sleep(5)
+                    continue
+                return self.print_message(refresh_token, proxy, Fore.RED, f"GET Access Token Failed: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
+    
+    async def register_nodes(self, refresh_token: str, register_payload: str, use_proxy: bool, proxy=None, retries=5):
+        url = f"{self.BASE_API}/devices/register-v2"
         data = json.dumps({"data":register_payload})
         headers = {
             **self.headers,
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {self.access_tokens[refresh_token]}",
             "Content-Length": str(len(data)),
             "Content-Type": "application/json"
         }
@@ -190,20 +223,24 @@ class Optimai:
             try:
                 async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
                     async with session.post(url=url, headers=headers, data=data) as response:
+                        if response.status == 401:
+                            await self.process_get_access_token(refresh_token, use_proxy)
+                            headers["Authorization"] = f"Bearer {self.access_tokens[refresh_token]}"
+                            continue
                         response.raise_for_status()
                         return await response.json()
             except (Exception, ClientResponseError) as e:
                 if attempt < retries - 1:
                     await asyncio.sleep(5)
                     continue
-                return self.print_message(access_token, proxy, Fore.RED, f"Registering Nodes Failed: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
+                return self.print_message(refresh_token, proxy, Fore.RED, f"Registering Nodes Failed: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
     
-    async def update_uptime(self, access_token: str, uptime_payload: str, proxy=None, retries=5):
-        url = "https://api.optimai.network/uptime/online"
+    async def update_uptime(self, refresh_token: str, uptime_payload: str, use_proxy: bool, proxy=None, retries=5):
+        url = f"{self.BASE_API}/uptime/online"
         data = json.dumps({"data":uptime_payload})
         headers = {
             **self.headers,
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {self.access_tokens[refresh_token]}",
             "Content-Length": str(len(data)),
             "Content-Type": "application/json"
         }
@@ -212,19 +249,23 @@ class Optimai:
             try:
                 async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
                     async with session.post(url=url, headers=headers, data=data) as response:
+                        if response.status == 401:
+                            await self.process_get_access_token(refresh_token, use_proxy)
+                            headers["Authorization"] = f"Bearer {self.access_tokens[refresh_token]}"
+                            continue
                         response.raise_for_status()
                         return await response.json()
             except (Exception, ClientResponseError) as e:
                 if attempt < retries - 1:
                     await asyncio.sleep(5)
                     continue
-                return self.print_message(access_token, proxy, Fore.RED, f"Update Uptime Failed: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
+                return self.print_message(refresh_token, proxy, Fore.RED, f"Update Uptime Failed: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
     
-    async def perform_checkin(self, access_token: str, proxy=None, retries=5):
-        url = "https://api.optimai.network/daily-tasks/check-in"
+    async def perform_checkin(self, refresh_token: str, use_proxy: bool, proxy=None, retries=5):
+        url = f"{self.BASE_API}/daily-tasks/check-in"
         headers = {
             **self.headers,
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {self.access_tokens[refresh_token]}",
             "Content-Length": "2",
             "Content-Type": "application/json"
         }
@@ -233,78 +274,104 @@ class Optimai:
             try:
                 async with ClientSession(connector=connector, timeout=ClientTimeout(total=120)) as session:
                     async with session.post(url=url, headers=headers, json={}) as response:
+                        if response.status == 401:
+                            await self.process_get_access_token(refresh_token, use_proxy)
+                            headers["Authorization"] = f"Bearer {self.access_tokens[refresh_token]}"
+                            continue
                         response.raise_for_status()
                         return await response.json()
             except (Exception, ClientResponseError) as e:
                 if attempt < retries - 1:
                     await asyncio.sleep(5)
                     continue
-                return self.print_message(access_token, proxy, Fore.RED, f"Perform Chechk-In Failed: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
+                return self.print_message(refresh_token, proxy, Fore.RED, f"Perform Chechk-In Failed: {Fore.YELLOW + Style.BRIGHT}{str(e)}")
             
-    async def process_register_nodes(self, access_token: str, register_payload: str, uptime_payload: str, use_proxy: bool):
-        proxy = self.get_next_proxy_for_account(access_token) if use_proxy else None
+    async def process_get_access_token(self, refresh_token: str, use_proxy: bool):
+        proxy = self.get_next_proxy_for_account(refresh_token) if use_proxy else None
+        access_token = None
+        while access_token is None:
+            access_token = await self.get_access_token(refresh_token, proxy)
+            if not access_token:
+                proxy = self.rotate_proxy_for_account(refresh_token) if use_proxy else None
+                await asyncio.sleep(5)
+                continue
+
+            self.access_tokens[refresh_token] = access_token
+            self.print_message(refresh_token, proxy, Fore.GREEN, "GET Access Token Success")
+            return self.access_tokens[refresh_token]
+            
+    async def process_register_nodes(self, refresh_token: str, register_payload: str, uptime_payload: str, use_proxy: bool):
+        proxy = self.get_next_proxy_for_account(refresh_token) if use_proxy else None
         nodes = None
         while nodes is None:
-            nodes = await self.register_nodes(access_token, register_payload, proxy)
+            nodes = await self.register_nodes(refresh_token, register_payload, use_proxy, proxy)
             if not nodes:
-                proxy = self.rotate_proxy_for_account(access_token) if use_proxy else None
+                proxy = self.rotate_proxy_for_account(refresh_token) if use_proxy else None
                 await asyncio.sleep(5)
                 continue
 
             register_response = nodes.get("data", {})
-            register_result = json.loads(self.decode_response_data(register_response))
+            register_result = self.decode_response_data(register_response)
             if register_result and register_result.get("device_id"):
-                self.print_message(access_token, proxy, Fore.GREEN, "Registering Nodes Success")
+                self.print_message(refresh_token, proxy, Fore.GREEN, "Registering Nodes Success")
                 
-                await self.process_update_uptime(access_token, uptime_payload, use_proxy)
+                await self.process_update_uptime(refresh_token, uptime_payload, use_proxy)
 
             nodes = None
-            self.print_message(access_token, proxy, Fore.RED, "Registering Nodes Failed")
+            self.print_message(refresh_token, proxy, Fore.RED, "Registering Nodes Failed")
             await asyncio.sleep(5)
             continue
 
-    async def process_update_uptime(self, access_token: str, uptime_payload: str, use_proxy: bool):
+    async def process_update_uptime(self, refresh_token: str, uptime_payload: str, use_proxy: bool):
         while True:
+            print(
+                f"{Fore.CYAN + Style.BRIGHT}[ {datetime.now().astimezone(wib).strftime('%x %X %Z')} ]{Style.RESET_ALL}"
+                f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
+                f"{Fore.BLUE + Style.BRIGHT}Wait For 10 Minutes For Update Uptime...{Style.RESET_ALL}",
+                end="\r"
+            )
             await asyncio.sleep(10 * 60)
 
-            proxy = self.get_next_proxy_for_account(access_token) if use_proxy else None
-            updated = await self.update_uptime(access_token, uptime_payload, proxy)
+            proxy = self.get_next_proxy_for_account(refresh_token) if use_proxy else None
+            updated = await self.update_uptime(refresh_token, uptime_payload, use_proxy, proxy)
             if updated:
                 updated_response = updated.get("data", {})
-                updated_result = json.loads(self.decode_response_data(updated_response))
+                updated_result = self.decode_response_data(updated_response)
                 if updated_result and updated_result.get("reward"):
                     reward = updated_result.get("reward", 0)
-                    self.print_message(access_token, proxy, Fore.GREEN, 
+                    self.print_message(refresh_token, proxy, Fore.GREEN, 
                         "Uptime Updated Successfully "
                         f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
                         f"{Fore.CYAN + Style.BRIGHT} Reward: {Style.RESET_ALL}"
                         f"{Fore.WHITE + Style.BRIGHT}+{reward} OPI{Style.RESET_ALL}"
                     )
                 else:
-                    self.print_message(access_token, proxy, Fore.RED, "Update Uptime Failed")
+                    self.print_message(refresh_token, proxy, Fore.RED, "Update Uptime Failed")
             
-    async def process_perform_checkin(self, access_token: str, use_proxy: bool):
+    async def process_perform_checkin(self, refresh_token: str, use_proxy: bool):
         while True:
-            proxy = self.get_next_proxy_for_account(access_token) if use_proxy else None
-            claim = await self.perform_checkin(access_token, proxy)
+            proxy = self.get_next_proxy_for_account(refresh_token) if use_proxy else None
+            claim = await self.perform_checkin(refresh_token, use_proxy, proxy)
             if claim and claim.get("message") == "Check-in successful":
                 reward = claim.get("reward")
-                self.print_message(access_token, proxy, Fore.GREEN, 
+                self.print_message(refresh_token, proxy, Fore.GREEN, 
                     "Check-In Success "
                     f"{Fore.MAGENTA + Style.BRIGHT}-{Style.RESET_ALL}"
                     f"{Fore.CYAN + Style.BRIGHT} Reward: {Style.RESET_ALL}"
                     f"{Fore.WHITE + Style.BRIGHT}+{reward} OPI{Style.RESET_ALL}"
                 )
             elif claim and claim.get("message") == "Check-in already completed for today":
-                self.print_message(access_token, proxy, Fore.YELLOW, "Already Check-In Today")
+                self.print_message(refresh_token, proxy, Fore.YELLOW, "Already Check-In Today")
             
             await asyncio.sleep(12 * 60 * 60)
         
-    async def process_accounts(self, access_token: str, register_payload: str, uptime_payload: str, use_proxy: bool):
-        tasks = []
-        tasks.append(asyncio.create_task(self.process_perform_checkin(access_token, use_proxy)))
-        tasks.append(asyncio.create_task(self.process_register_nodes(access_token, register_payload, uptime_payload, use_proxy)))
-        await asyncio.gather(*tasks)
+    async def process_accounts(self, refresh_token: str, register_payload: str, uptime_payload: str, use_proxy: bool):
+        self.access_tokens[refresh_token] = await self.process_get_access_token(refresh_token, use_proxy)
+        if self.access_tokens[refresh_token]:
+            tasks = []
+            tasks.append(asyncio.create_task(self.process_perform_checkin(refresh_token, use_proxy)))
+            tasks.append(asyncio.create_task(self.process_register_nodes(refresh_token, register_payload, uptime_payload, use_proxy)))
+            await asyncio.gather(*tasks)
         
     async def main(self):
         try:
@@ -335,12 +402,12 @@ class Optimai:
                 tasks = []
                 for account in accounts:
                     if account:
-                        access_token = account["accessToken"]
+                        refresh_token = account["refreshToken"]
                         register_payload = account["registerPayload"]
                         uptime_payload = account["uptimePayload"]
 
-                        if access_token and register_payload and uptime_payload:
-                            tasks.append(asyncio.create_task(self.process_accounts(access_token, register_payload, uptime_payload, use_proxy)))
+                        if refresh_token and register_payload and uptime_payload:
+                            tasks.append(asyncio.create_task(self.process_accounts(refresh_token, register_payload, uptime_payload, use_proxy)))
 
                 await asyncio.gather(*tasks)
                 await asyncio.sleep(10)
